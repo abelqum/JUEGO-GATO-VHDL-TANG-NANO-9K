@@ -126,58 +126,77 @@ begin
     );
 
 
- process(clk)
-    -- Etapas de sincronización
+ -- Reemplaza el process(clk) existente en topModule.vhd con este:
+process(clk)
+    -- Variables para sincronización
     variable mov_sync1, mov_sync2 : std_logic := '1';
     variable enter_sync1, enter_sync2 : std_logic := '1';
     variable reset_sync1, reset_sync2 : std_logic := '1';
     
-    -- Registros para detección de flancos
-    variable mov_prev, enter_prev : std_logic := '1';
+    -- Variables para el estado estable (salida del debounce)
+    variable mov_stable : std_logic := '1';
+    variable enter_stable : std_logic := '1';
+    
+    -- Variables para detectar el flanco (valor anterior)
+    variable mov_last : std_logic := '1';
+    variable enter_last : std_logic := '1';
+    
+    -- Contadores independientes para cada botón (aprox 15ms a 27MHz)
+    -- 27,000,000 * 0.015 = 405,000
+    variable count_mov : integer range 0 to 500000 := 0;
+    variable count_enter : integer range 0 to 500000 := 0;
+
 begin
     if rising_edge(clk) then
-        -- Sincronización en dos etapas (valores iniciales en '1' - inactivo)
-        mov_sync1 := mov;     -- Primer flip-flop
-        mov_sync2 := mov_sync1; -- Segundo flip-flop
-        
-        enter_sync1 := enter;
-        enter_sync2 := enter_sync1;
-        
-        reset_sync1 := reset;
-        reset_sync2 := reset_sync1;
-        
-        -- Lógica anti-rebote
-        if debounce_counter = 4050000 then -- 150ms a 27MHz
-            debounce_counter <= 0;
-            
-            -- Detección de flanco de bajada (1->0) para mov (activo en bajo)
-            if mov_prev = '1' and mov_sync2 = '0' then
-                mov_db <= '0'; -- Activo por un ciclo
+        -- 1. Sincronización (evitar metaestabilidad)
+        mov_sync2 := mov_sync1;     mov_sync1 := mov;
+        enter_sync2 := enter_sync1; enter_sync1 := enter;
+        reset_sync2 := reset_sync1; reset_sync1 := reset;
+        res_db <= reset_sync2;
+
+        -- 2. Antirrebotes para MOV
+        if mov_sync2 /= mov_stable then
+            if count_mov < 405000 then
+                count_mov := count_mov + 1;
             else
-                mov_db <= '1'; -- Inactivo
+                mov_stable := mov_sync2; -- Actualizar estado estable
+                count_mov := 0;
             end if;
-            
-            -- Detección de flanco de bajada (1->0) para enter (activo en bajo)
-            if enter_prev = '1' and enter_sync2 = '0' then
-                enter_db <= '0'; -- Activo por un ciclo
-            else
-                enter_db <= '1'; -- Inactivo
-            end if;
-            
-            -- Actualizar valores previos
-            mov_prev := mov_sync2;
-            enter_prev := enter_sync2;
-            
-            -- Reset sincronizado
-            res_db <= reset_sync2;
         else
-            debounce_counter <= debounce_counter + 1;
-            
-            -- Mantener señales inactivas entre detecciones
+            count_mov := 0;
+        end if;
+
+        -- 3. Antirrebotes para ENTER
+        if enter_sync2 /= enter_stable then
+            if count_enter < 405000 then
+                count_enter := count_enter + 1;
+            else
+                enter_stable := enter_sync2; -- Actualizar estado estable
+                count_enter := 0;
+            end if;
+        else
+            count_enter := 0;
+        end if;
+
+        -- 4. Detector de Flanco (Genera pulso de 1 ciclo)
+        -- Para MOV (Activo bajo: detectamos transición 1 -> 0)
+        if mov_last = '1' and mov_stable = '0' then
+            mov_db <= '0'; -- Pulso activo por 1 ciclo
+        else
             mov_db <= '1';
+        end if;
+        mov_last := mov_stable; -- Guardar estado actual para el siguiente ciclo
+
+        -- Para ENTER (Activo bajo: detectamos transición 1 -> 0)
+        if enter_last = '1' and enter_stable = '0' then
+            enter_db <= '0'; -- Pulso activo por 1 ciclo
+        else
             enter_db <= '1';
         end if;
+        enter_last := enter_stable; -- Guardar estado actual
+        
     end if;
+
 end process;
 ini<=comiM;
 sjugador1<=sjug1;
